@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WALK</title>
+</head>
+<style>
+    .mainCanvas {
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+</style>
+<body>
+<div id="main_canvas" class="">
+    <canvas id="bg_map" style="background-color: #e8ebec;z-index:1; border: 1px solid #403e3e" class="mainCanvas"
+            width="1400px" height="800px"></canvas>
+    <canvas id="barrier" style="z-index: 2" class="mainCanvas" width="1400px" height="800px"></canvas>
+    <canvas id="walk_trace" style="z-index: 3" class="mainCanvas" width="1400px" height="800px"></canvas>
+    <canvas id="main_point" style="z-index: 4" class="mainCanvas" width="1400px" height="800px"></canvas>
+
+</div>
+</body>
+</html>
+
+<script>
+
+    document.body.onload = main;
+
+    function main() {
+        initCanvasCtx()
+        initMap()
+        initBarriers()
+        initWalk()
+        startWalk()
+        startFrameRef()
+    }
+
+
+    let changing = false;
+    document.onmousedown = function (event) {
+        changing = true
+        let x = event.offsetX
+        let y = event.offsetY
+        setTimeout(function () {
+            changeEnd(x, y)
+            changing = false
+        }, 300)//数据锁问题，延时处理
+    }
+
+    document.onmousemove = function (event) {
+        pointX = event.offsetX
+        pointY = event.offsetY
+    }
+
+    function changeEnd(x, y) {
+        // 已经走到终点了，从终点走到新终点
+        if (!walking){
+            startX = endX
+            startY = endY
+            endX = x
+            endY = y
+            startWalk()
+            return
+        }
+        // 改变当前终点
+        mStartX = curX
+        mStartY = curY
+        endX = x
+        endY = y
+        mEndX = endX
+        mEndY = endY
+        baseTime = new Date().valueOf()
+        distance = getDistance(mStartX, mStartY, mEndX, mEndY)
+        console.log('#改变终点', x, y)
+    }
+
+    const CANVAS_WEIGHT = 1400
+    const CANVAS_HEIGHT = 800
+    const REFRESH_RATE = 100  // 刷新时间 ms
+    const MAX_BR = 150
+    const WALK_TRACE_STYLE = 'green'
+    const BARRIER_STYLE = '#323131'
+    const START_END_POINT_STYLE = '#9f27cb'
+    const START_END_POINT_SIZE = 12
+    const M_START_END_POINT_STYLE = '#23A70C'
+    const M_START_END_POINT_SIZE = 6
+    const MOUSE_POINT_STYLE = '#108CCF'
+
+
+    let bgMapCtx, barrierCtx, walkTraceCtx, mainPointCtx
+    let startX, startY, curX, curY, mStartX, mStartY, mEndX, mEndY, endX, endY, pointX, pointY = 0
+    let baseTime, distance, speed;
+    let walking = false
+
+
+    // 模拟障碍点x:y:r
+    let barriers = {
+        300: {
+            150: 50,
+            500: 150,
+
+        },
+        600: {
+            350: 80,
+            100: 70,
+        },
+        750:{
+            550: 70,
+        },
+        1000: {
+            400: 100
+        },
+        1150: {
+            150: 130
+        }
+    }
+
+    function initMap() {
+        for (let i = 0; i <= CANVAS_WEIGHT; i += 100) {
+            text(bgMapCtx, i, i, 10)
+        }
+        for (let i = 100; i <= CANVAS_HEIGHT; i += 100) {
+            text(bgMapCtx, i, 1, i)
+        }
+    }
+
+    function initWalk() {
+        startX = 100;
+        startY = 100;
+        endX = 1200;
+        endY = 490;
+        speed = 0.1
+    }
+
+    function startFrameRef() {
+        window.requestAnimationFrame(startFrameRef);
+        drawMainPoint()
+        arc(walkTraceCtx, curX, curY, 1, WALK_TRACE_STYLE)
+    }
+
+    function startWalk() {
+        walkTraceCtx.clearRect(0, 0, CANVAS_WEIGHT, CANVAS_HEIGHT);
+        walking = true
+        curX = startX
+        curY = startY
+        mStartX = startX
+        mStartY = startY
+        mEndX = endX
+        mEndY = endY
+        baseTime = new Date().valueOf()
+        distance = getDistance(mStartX, mStartY, mEndX, mEndY)
+        console.log('#开始行走', mStartX, mStartY, '->', mEndX, mEndY)
+        walkLoop()
+    }
+
+    function xy(x, y) {
+        return x + ':' + y
+    }
+
+    function walkLoop(curWalkIdx) {
+        if (changing) {
+            setTimeout(function () {
+                walkLoop(curWalkIdx)
+            })
+            return
+        }
+        let curTime = new Date().valueOf()
+        let rate = (curTime - baseTime) * speed / distance
+        curX = (mEndX - mStartX) * rate + mStartX
+        curY = (mEndY - mStartY) * rate + mStartY
+
+        // 跨越了障碍点或终点
+        if (crossMEnd()) {
+            mStartX = mEndX
+            mStartY = mEndY
+            if (mEndX === endX && mEndY === endY) {
+                console.log('#到达终点', endX, endY)
+                walking = false
+                return
+            }
+            mEndX = endX
+            mEndY = endY
+            baseTime = new Date().valueOf()
+            distance = getDistance(mStartX, mStartY, mEndX, mEndY)
+            console.log('改变目标至终点', mStartX, mStartY, mEndX, mEndY)
+        }
+
+        // 找下一个障碍点
+        let barrier = findBarrier(mStartX, mStartY, mEndX, mEndY)
+        if (barrier[0]) {
+            mStartX = curX
+            mStartY = curY
+            mEndX = barrier[0]
+            mEndY = barrier[1]
+            baseTime = new Date().valueOf()
+            distance = getDistance(mStartX, mStartY, mEndX, mEndY)
+            console.log('改变目标至障碍', mStartX, mStartY, mEndX, mEndY)
+        }
+
+        setTimeout(function () {
+            walkLoop(curWalkIdx)
+        }, REFRESH_RATE)
+    }
+
+    // 待优化
+    function crossMEnd() {
+        if (mEndX - mStartX > 0) {
+            if (mEndY - mStartY > 0) {
+                if (curX > mEndX && curY > mEndY) {
+                    return true
+                }
+            } else {
+                if (curX > mEndX && curY < mEndY) {
+                    return true
+                }
+            }
+        } else {
+            if (mEndY - mStartY > 0) {
+                if (curX < mEndX && curY > mEndY) {
+                    return true
+                }
+            } else {
+                if (curX < mEndX && curY < mEndY) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    // 目前是遍历矩形范围内找障碍点，可将障碍点维护一个坐标链表，更加高效，在js中就不做实现了
+    function findBarrier(startX, startY, endX, endY) {
+        let xIdx = 0
+        let yIdx = 0
+        let xStep = endX < startX ? -1 : 1
+        let yStep = endY < startY ? -1 : 1
+
+        // 坐标不在矩形框内，但辐射面积可能相交
+        startX = parseInt(startX) - xStep * MAX_BR
+        startY = parseInt(startY) - yStep * MAX_BR
+
+        endX = parseInt(endX) + xStep * MAX_BR
+        endY = parseInt(endY) + yStep * MAX_BR
+
+        let xSpan = Math.abs(endX - startX)
+        let ySpan = Math.abs(endY - startY)
+
+
+        for (let i = startX; xIdx < xSpan; i += xStep) {
+            xIdx++
+            for (let j = startY; yIdx < ySpan; j += yStep) {
+                yIdx++
+                if (barriers[i] && barriers[i][j]) {
+                    let isBarrier = walkBarrier(mStartX, mStartY, mEndX, mEndY, i, j, barriers[i][j])
+                    if (isBarrier[0]) {
+                        return isBarrier
+                    }
+                }
+            }
+            yIdx = 0
+        }
+
+        return []
+    }
+
+    function walkBarrier(startX, startY, endX, endY, bX, bY, bR) {
+        //bR += 10
+        //getDistance(startX, s)
+        // 直线方程参数 ax+by+c=0
+        let a = startY - endY
+        let b = endX - startX
+        let c = startX * endY - startY * endX
+
+        // 与圆相切的平行线
+        let c1 = 0
+        let c2 = 0
+        let mc = 0
+        // 切点
+        let nx = 0
+        let ny = 0
+        if (a === 0) {
+            //水平
+            c1 = (bY - bR) * -b
+            c2 = (bY + bR) * -b
+            mc = Math.abs(c - c1) > Math.abs(c - c2) ? c2 : c1
+            nx = bX
+            ny = -mc / b
+        } else if (b === 0) {
+            // 垂直
+            c1 = (bX - bR) * -a
+            c2 = (bX + bR) * -a
+            mc = Math.abs(c - c1) > Math.abs(c - c2) ? c2 : c1
+            ny = bY
+            nx = -mc / a
+        } else {
+            // 是否相交
+            let dl = Math.abs(a * bX + b * bY + c) / Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2));
+            // 小数原因，加5容错
+            if (dl > bR - 5) {
+                return []
+            }
+            // 斜
+            // 圆和直线方程相切换算
+            // | ax + by + c1 |/ sqrt(a`2 + b`2) = R
+            let ff = a * bX + b * bY
+            let mm = Math.sqrt(Math.pow(a, 2) + Math.pow(b, 2)) * bR
+            c1 = -mm - ff
+            c2 = mm - ff
+            // 离原横线最近的那条线
+            mc = Math.abs(c - c1) > Math.abs(c - c2) ? c2 : c1
+            // 与圆相切与原直线平行的直线方程 ax+by+mc=0
+            // 求切点：圆心坐标为（x1,y1）,根据圆方程和直线方程得: （1+a*a/b*b)X`2+(2*a/b/y1-2*x1+2*mc*a/(b*b))X + x1*x1+mc*mc/b*b+2*mc/(b/y1)+y1*y1-r*r=0
+            // X = (-b +- sqrt(b*b-4*a*c)) / 2*a, 因为只有一个交点，sqrt(b*b-4*a*c)近似为0，则X=-b/2*a
+            let fca = 1 + Math.pow(a, 2) / Math.pow(b, 2)
+            let fcb = -2 * bX + (2 * mc * a) / Math.pow(b, 2) + 2 * a / b * bY
+            // 切点坐标（nx,ny）
+            nx = Math.abs(-1 * fcb) / (2 * fca)
+            ny = (-1 * mc - a * nx) / b
+        }
+        return [nx, ny]
+    }
+
+    function initBarriers() {
+        for (let xIdx in barriers) {
+            let xBarriers = barriers[xIdx]
+            for (let yIdx in xBarriers) {
+                //arc(barrierCtx, xIdx, yIdx, 1)
+                arc(barrierCtx, xIdx, yIdx, xBarriers[yIdx], BARRIER_STYLE)
+            }
+        }
+    }
+
+    function getDistance(startX, startY, endX, endY) {
+        return Math.sqrt(Math.pow(startX - endX, 2) + Math.pow(startY - endY, 2))
+    }
+
+    function initCanvasCtx() {
+        bgMapCtx = document.getElementById('bg_map').getContext('2d');
+        barrierCtx = document.getElementById('barrier').getContext('2d');
+        walkTraceCtx = document.getElementById('walk_trace').getContext('2d');
+        mainPointCtx = document.getElementById('main_point').getContext('2d');
+    }
+
+    function drawMainPoint() {
+        mainPointCtx.clearRect(0, 0, CANVAS_WEIGHT, CANVAS_HEIGHT);
+        arcFill(mainPointCtx, startX, startY, START_END_POINT_SIZE, START_END_POINT_STYLE)
+        arcFill(mainPointCtx, endX, endY, START_END_POINT_SIZE, START_END_POINT_STYLE)
+        if (walking){
+            arcFill(mainPointCtx, mStartX, mStartY, M_START_END_POINT_SIZE, M_START_END_POINT_STYLE)
+            arcFill(mainPointCtx, mEndX, mEndY, M_START_END_POINT_SIZE, M_START_END_POINT_STYLE)
+        }
+
+        if (pointX !== 0 && pointX < CANVAS_WEIGHT && pointY < CANVAS_HEIGHT) {
+            arcFill(mainPointCtx, pointX, pointY, START_END_POINT_SIZE, MOUSE_POINT_STYLE)
+            text(mainPointCtx, pointX + ':' + pointY, pointX + 20, pointY + 6,20)
+        }
+    }
+
+    function arcFill(ctx, x, y, r, style) {
+        ctx.beginPath();
+        ctx.fillStyle = style
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function arc(ctx, x, y, r,style) {
+        ctx.beginPath();
+        ctx.lineWidth=1
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.strokeStyle = style
+        ctx.stroke();
+    }
+
+    function text(ctx, text, x, y, size) {
+        ctx.fillText(text, x, y)
+    }
+
+    function line(ctx, startX, startY, endX, endY) {
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+    }
+
+
+</script>
